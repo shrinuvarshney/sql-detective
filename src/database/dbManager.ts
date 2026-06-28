@@ -73,6 +73,54 @@ function seedDatabase(database: any) {
     );
   `);
 
+  // Create servers table
+  database.run(`
+    CREATE TABLE servers (
+      id INTEGER PRIMARY KEY,
+      ip_address TEXT NOT NULL,
+      location TEXT NOT NULL,
+      critical_level TEXT NOT NULL,
+      active_status TEXT NOT NULL,
+      os_version TEXT NOT NULL
+    );
+  `);
+
+  // Create network_logs table
+  database.run(`
+    CREATE TABLE network_logs (
+      id INTEGER PRIMARY KEY,
+      source_ip TEXT NOT NULL,
+      destination_ip TEXT NOT NULL,
+      bytes_transferred INTEGER NOT NULL,
+      port INTEGER NOT NULL,
+      protocol TEXT NOT NULL,
+      status TEXT NOT NULL
+    );
+  `);
+
+  // Create bank_transactions table
+  database.run(`
+    CREATE TABLE bank_transactions (
+      id INTEGER PRIMARY KEY,
+      sender_account TEXT NOT NULL,
+      receiver_account TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      date TEXT NOT NULL
+    );
+  `);
+
+  // Create access_cards table
+  database.run(`
+    CREATE TABLE access_cards (
+      id INTEGER PRIMARY KEY,
+      employee_name TEXT NOT NULL,
+      access_level TEXT NOT NULL,
+      clearance_code TEXT NOT NULL,
+      last_scanned TEXT NOT NULL
+    );
+  `);
+
   // Insert seed data into suspects
   database.run(`
     INSERT INTO suspects (id, name, age, occupation, city, bank_balance, car_model) VALUES 
@@ -105,6 +153,46 @@ function seedDatabase(database: any) {
     (2, 'Reactor Blueprint Theft', '2026-06-25', 'Quantum Grid Labs', 'High', 10),
     (3, 'Insider Trading', '2026-04-03', 'Neo-City Exchange', 'Medium', 2),
     (4, 'Black Market Dealing', '2026-06-01', 'Sector 4 Docks', 'High', 7);
+  `);
+
+  // Insert seed data into servers
+  database.run(`
+    INSERT INTO servers (id, ip_address, location, critical_level, active_status, os_version) VALUES
+    (1, '192.168.1.10', 'Main Office', 'High', 'Active', 'CentOS 8'),
+    (2, '10.0.0.15', 'Datacenter Sector 4', 'Critical', 'Active', 'RedHat 8.4'),
+    (3, '172.16.4.88', 'Tokyo Server Hub', 'Critical', 'Active', 'Ubuntu 20.04'),
+    (4, '192.168.22.4', 'Underground Vault', 'Critical', 'Offline', 'Alpine Linux'),
+    (5, '10.12.8.200', 'Quantum Labs', 'Medium', 'Active', 'Custom OS v3');
+  `);
+
+  // Insert seed data into network_logs
+  database.run(`
+    INSERT INTO network_logs (id, source_ip, destination_ip, bytes_transferred, port, protocol, status) VALUES
+    (1, '192.168.1.100', '10.0.0.15', 5000000, 80, 'HTTP', 'Blocked'),
+    (2, '172.16.4.88', '192.168.22.4', 250000000, 22, 'SSH', 'Success'),
+    (3, '10.0.0.15', '8.8.8.8', 1250, 53, 'DNS', 'Success'),
+    (4, '192.168.1.10', '172.16.4.88', 98000000, 443, 'HTTPS', 'Success'),
+    (5, '10.12.8.200', '192.168.22.4', 45000, 3306, 'MySQL', 'Failed');
+  `);
+
+  // Insert seed data into bank_transactions
+  database.run(`
+    INSERT INTO bank_transactions (id, sender_account, receiver_account, amount, type, date) VALUES
+    (1, 'ACC-4492', 'ACC-8831', 250000, 'Wire Transfer', '2026-06-20'),
+    (2, 'ACC-0012', 'ACC-4492', 5000000, 'Crypto Exchange', '2026-06-25'),
+    (3, 'ACC-8831', 'ACC-9102', 15000, 'ATM Withdrawal', '2026-06-27'),
+    (4, 'ACC-7711', 'ACC-1299', 85000, 'Corporate Payment', '2026-06-24'),
+    (5, 'ACC-9102', 'ACC-0012', 1200000, 'Wire Transfer', '2026-06-26');
+  `);
+
+  // Insert seed data into access_cards
+  database.run(`
+    INSERT INTO access_cards (id, employee_name, access_level, clearance_code, last_scanned) VALUES
+    (1, 'Marcus Vance', 'Level 1', 'CLR-ALPHA', '2026-06-28 09:12:00'),
+    (2, 'Victor Vance', 'Level 5', 'CLR-OMEGA', '2026-06-28 11:45:00'),
+    (3, 'Sarah Connor', 'Level 3', 'CLR-GAMMA', '2026-06-27 22:30:00'),
+    (4, 'Thomas Anderson', 'Level 2', 'CLR-BETA', '2026-06-28 08:00:00'),
+    (5, 'Maya Lin', 'Level 5', 'CLR-OMEGA', '2026-06-28 14:15:00');
   `);
 }
 

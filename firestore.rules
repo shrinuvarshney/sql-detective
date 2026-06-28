@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net Default-Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Secure user progress documents
+    match /users/{userId} {
+      allow read: if isSignedIn() && isOwner(userId);
+      allow create: if isSignedIn() && isOwner(userId) && isValidUserProgress(incoming());
+      allow update: if isSignedIn() && isOwner(userId) && isValidUserProgress(incoming());
+    }
+
+    // Hardened ABAC Global Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isValidUserProgress(data) {
+      return data.completedLevels is list
+        && data.highestScore is number
+        && data.totalScore is number
+        && data.currentLevelId is number
+        && data.xp is number
+        && data.level is number
+        && data.credits is number
+        && data.evidencePoints is number
+        && data.unlockedAvatars is list
+        && data.achievements is list
+        && data.streak is number
+        && data.statistics is map;
+    }
+  }
+}

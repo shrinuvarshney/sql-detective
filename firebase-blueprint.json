@@ -1,0 +1,106 @@
+{
+  "entities": {
+    "UserProgress": {
+      "title": "UserProgress",
+      "description": "Durable progress, statistics, level accomplishments, and customized profiles for SQL Detective operatives.",
+      "type": "object",
+      "properties": {
+        "completedLevels": {
+          "type": "array",
+          "description": "List of completed level IDs"
+        },
+        "highestScore": {
+          "type": "number",
+          "description": "Highest recorded score"
+        },
+        "totalScore": {
+          "type": "number",
+          "description": "Total accumulated score"
+        },
+        "currentLevelId": {
+          "type": "number",
+          "description": "Active case file ID the player is currently solving"
+        },
+        "hintsUsedCount": {
+          "type": "object",
+          "description": "Mapping from levelId string to number of hints unlocked (0-3)"
+        },
+        "levelScores": {
+          "type": "object",
+          "description": "Mapping from levelId string to specific score obtained"
+        },
+        "attemptsCount": {
+          "type": "object",
+          "description": "Mapping from levelId string to query attempt count"
+        },
+        "username": {
+          "type": "string",
+          "description": "Custom operator code-name/username"
+        },
+        "selectedAvatar": {
+          "type": "string",
+          "description": "ID of currently selected operator avatar"
+        },
+        "xp": {
+          "type": "number",
+          "description": "Experience points accumulated"
+        },
+        "level": {
+          "type": "number",
+          "description": "Current agent academy level"
+        },
+        "credits": {
+          "type": "number",
+          "description": "Current premium credits ledger balance"
+        },
+        "evidencePoints": {
+          "type": "number",
+          "description": "Available Evidence Points balance for unlocking hints"
+        },
+        "unlockedAvatars": {
+          "type": "array",
+          "description": "List of unlocked avatar IDs"
+        },
+        "achievements": {
+          "type": "array",
+          "description": "List of unlocked achievement IDs"
+        },
+        "streak": {
+          "type": "number",
+          "description": "Active consecutive days access streak"
+        },
+        "lastActiveDate": {
+          "type": "string",
+          "description": "Date format YYYY-MM-DD of the last active login"
+        },
+        "statistics": {
+          "type": "object",
+          "description": "Detailed gameplay statistics tracker"
+        }
+      },
+      "required": [
+        "completedLevels",
+        "highestScore",
+        "totalScore",
+        "currentLevelId",
+        "hintsUsedCount",
+        "levelScores",
+        "attemptsCount",
+        "xp",
+        "level",
+        "credits",
+        "evidencePoints",
+        "unlockedAvatars",
+        "achievements",
+        "streak",
+        "statistics"
+      ]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "UserProgress",
+      "description": "Root collection storing operative progress for each authenticated user."
+    }
+  }
+}

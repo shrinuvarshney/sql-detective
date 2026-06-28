@@ -3,11 +3,12 @@ import { Level, GameProgress, GameSettings, QueryResult } from '../types';
 import { runQuery, compareResults } from '../database/dbManager';
 import SchemaExplorer from './SchemaExplorer';
 import SqlEditor from './SqlEditor';
+import CaseSolvedModal from './CaseSolvedModal';
 import { levels } from '../levels/levelsData';
 import { 
-  ArrowLeft, Award, HelpCircle, CheckCircle2, 
-  XCircle, AlertTriangle, ShieldCheck, ChevronRight, 
-  Play, Volume2, VolumeX, Eye, BookOpen, ThumbsUp
+  ArrowLeft, Award, CheckCircle2, 
+  XCircle, AlertTriangle, ShieldCheck, 
+  Volume2, VolumeX, Eye, Zap, Sparkles
 } from 'lucide-react';
 
 interface GameScreenProps {
@@ -18,9 +19,18 @@ interface GameScreenProps {
   onToggleSound: () => void;
   onResetProgress: () => void;
   onSelectLevel: (id: number) => void;
-  useHint: (levelId: number) => number;
+  spendEvidencePointsForHint: (levelId: number, hintIndex: number, cost: number) => boolean;
   registerAttempt: (levelId: number) => void;
-  completeLevel: (levelId: number) => { scoreEarned: number; isFirstTime: boolean };
+  completeLevel: (levelId: number) => {
+    scoreEarned: number;
+    xpEarned: number;
+    creditsEarned: number;
+    epEarned: number;
+    isFirstTime: boolean;
+    didLevelUp: boolean;
+    newLevel: number;
+    newAchievements: string[];
+  };
 }
 
 export default function GameScreen({
@@ -30,7 +40,7 @@ export default function GameScreen({
   onBackToMenu,
   onToggleSound,
   onSelectLevel,
-  useHint,
+  spendEvidencePointsForHint,
   registerAttempt,
   completeLevel
 }: GameScreenProps) {
@@ -41,8 +51,18 @@ export default function GameScreen({
   const [isSuccess, setIsSuccess] = useState(false);
   const [scoreEarnedInLevel, setScoreEarnedInLevel] = useState<number | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [isSolvedModalOpen, setIsSolvedModalOpen] = useState(false);
   
-  // Keep track of active revealed hints
+  // Store rewards for displaying in modal
+  const [lastRewards, setLastRewards] = useState<{
+    xpEarned: number;
+    creditsEarned: number;
+    epEarned: number;
+    didLevelUp: boolean;
+    newLevel: number;
+    newAchievements: string[];
+  } | null>(null);
+
   const hintsUsedCount = progress.hintsUsedCount[level.id] || 0;
 
   const monacoEditorRef = useRef<any>(null);
@@ -53,7 +73,7 @@ export default function GameScreen({
     setConsoleLogs(prev => [...prev.slice(-15), `[${timestamp}] ${message}`]);
   };
 
-  // Whenever level changes, reset state and load its initial query
+  // Reset local query input state whenever active level changes
   useEffect(() => {
     setUserQuery(level.initialQuery);
     setQueryResult(null);
@@ -61,47 +81,79 @@ export default function GameScreen({
     setValidationMessage(null);
     setIsSuccess(false);
     setScoreEarnedInLevel(null);
+    setLastRewards(null);
+    
+    // Welcome log entry
     setConsoleLogs([
-      `CONNECTED SECURITY PORTAL // CASE ${level.id}`,
-      `SCANNING SUSPECT DATABASES...`,
-      `SECURITY RATING: ${level.id >= 11 ? 'ELITE INTEL BYPASS' : level.id >= 6 ? 'ELEVATED DETECTOR' : 'STANDARD DETECTOR'}`,
-      `READY FOR STRUCTURAL SQL INPUT.`
+      `[${new Date().toLocaleTimeString()}] INGESTED SECURE NODE DB: ${level.title}`,
+      `[${new Date().toLocaleTimeString()}] CONTEXT ALGORITHM: ${level.concept} STATEMENT RESOLUTION IS MANDATORY.`,
+      `[${new Date().toLocaleTimeString()}] WAITING FOR SOLVER COMPILER SUBMISSION...`
     ]);
   }, [level]);
 
+  const handleNextLevel = () => {
+    setIsSolvedModalOpen(false);
+    
+    // If we've completed all levels (50 total)
+    if (level.id >= 50) {
+      addLog("ALL DATABASES SECURED. YOU ARE AN ELITE MASTER ARCHITECT!");
+      onBackToMenu();
+      return;
+    }
+
+    // Load next level
+    onSelectLevel(level.id + 1);
+  };
+
+  // Evaluate query
   const handleRunQuery = async () => {
     if (isEvaluating) return;
-    setIsEvaluating(true);
+    setIsEvaluating(false);
     setQueryError(null);
     setValidationMessage(null);
-    addLog("COMPILING SQL WORKSPACE...");
+    setIsSuccess(false);
 
-    // 1. Register an execution attempt for score tracking
+    const queryToRun = userQuery.trim();
+    if (!queryToRun) {
+      setQueryError("Empty query submitted. Please write a valid SQL statement.");
+      addLog("[WARN] EMPTY QUEUE DETECTED. COMPILER SUBSTATION HALTED.");
+      return;
+    }
+
+    setIsEvaluating(true);
+    addLog(`RUNNING SOLVER QUEUE ON INTERNAL SQLite CLIENT...`);
+
+    // Increment attempts count
     registerAttempt(level.id);
 
-    // 2. Execute the user's SQL query on the in-browser SQLite DB
-    const playerResult = await runQuery(userQuery);
-
-    // 3. Execute the canonical expected SQL query for comparison
+    // 1. Get raw expected result query output
     const expectedResult = await runQuery(level.expectedQuery);
+    if (expectedResult.error) {
+      console.error("System configuration error: Expected Query Failed!", expectedResult.error);
+      setQueryError("Agency database config error. Contact administrator.");
+      setIsEvaluating(false);
+      return;
+    }
 
+    // 2. Execute player's query
+    const playerResult = await runQuery(queryToRun);
+
+    // 3. Process execution outputs
     if (playerResult.error) {
       setQueryError(playerResult.error);
-      setQueryResult(null);
-      setIsSuccess(false);
       playSound('wrong');
       addLog(`[ERROR] SYNTAX FAULT IN SQL RUNTIME: ${playerResult.error}`);
       setIsEvaluating(false);
       return;
     }
 
-    // Display the successful tabular data results
+    // Display successful tabular data output
     setQueryResult({
       columns: playerResult.columns,
       values: playerResult.values
     });
 
-    // 4. Compare player's results vs expectations
+    // 4. Compare player results against expected expectations
     const match = compareResults(playerResult, expectedResult);
 
     if (match.success) {
@@ -110,14 +162,18 @@ export default function GameScreen({
       addLog("[SUCCESS] PARSER MATCHED! SECURITY ENVELOPE BROKEN.");
       
       // Calculate and save level score & unlock next level
-      const { scoreEarned, isFirstTime } = completeLevel(level.id);
-      if (isFirstTime) {
-        setScoreEarnedInLevel(scoreEarned);
+      const rewards = completeLevel(level.id);
+      setScoreEarnedInLevel(rewards.scoreEarned);
+      setLastRewards(rewards);
+      
+      if (rewards.isFirstTime) {
         playSound('complete');
       } else {
-        // Already completed before, give success sound but no double score
         playSound('success');
       }
+
+      // Show Case Solved Modal!
+      setIsSolvedModalOpen(true);
     } else {
       // Incorrect solution
       setValidationMessage(match.reason || 'Query output does not match expected result records.');
@@ -130,7 +186,6 @@ export default function GameScreen({
   };
 
   const playSound = (type: 'click' | 'success' | 'wrong' | 'complete') => {
-    // Sound playback utility linked to settings
     if (settings.soundEnabled && (window as any).initSqlJs) {
       import('../utils/audio').then(mod => {
         mod.playSound(type, true);
@@ -148,10 +203,13 @@ export default function GameScreen({
     addLog("REVERTED WORKSPACE QUERY ENGINE.");
   };
 
-  const handleRequestHint = () => {
-    if (hintsUsedCount < 3) {
-      useHint(level.id);
-      addLog(`[INTEL] DECRYPTING LEVEL ASSISTANCE SYLLABUS (HINT REQUESTED)...`);
+  const handleRequestHint = (hintIndex: number, cost: number) => {
+    const success = spendEvidencePointsForHint(level.id, hintIndex, cost);
+    if (success) {
+      addLog(`[INTEL] DECRYPTED HINT LEVEL ${hintIndex + 1}. DEDUCTED -${cost} EP.`);
+    } else {
+      addLog(`[WARN] INSUFFICIENT EVIDENCE POINTS. REQUIRE ${cost} EP.`);
+      playSound('wrong');
     }
   };
 
@@ -168,28 +226,20 @@ export default function GameScreen({
           endLineNumber: position.lineNumber,
           endColumn: position.column
         };
-        const textToInsert = token;
-        const op = { range, text: textToInsert, forceMoveMarkers: true };
-        editor.executeEdits("schema-explorer", [op]);
+        editor.executeEdits("my-source", [
+          {
+            range: range,
+            text: token,
+            forceMoveMarkers: true
+          }
+        ]);
         editor.focus();
-      } else {
-        setUserQuery(prev => prev + " " + token);
       }
     } else {
-      setUserQuery(prev => prev + " " + token);
+      setUserQuery(prev => prev + token);
     }
   };
 
-  const handleNextLevel = () => {
-    if (level.id < 15) {
-      onSelectLevel(level.id + 1);
-    } else {
-      // Completed last level! Go back to menu
-      onBackToMenu();
-    }
-  };
-
-  // Safe sound toggle handler
   const handleToggleSoundLocal = () => {
     onToggleSound();
     playSound('click');
@@ -216,8 +266,8 @@ export default function GameScreen({
             <div className="w-5 h-5 bg-blue-500 rounded flex items-center justify-center">
               <span className="text-[9px] font-bold text-white">SQL</span>
             </div>
-            <span className="font-semibold tracking-tight text-xs text-white">
-              SQL DETECTIVE <span className="text-blue-400 font-mono text-[9px] ml-1">v0.4.2-alpha</span>
+            <span className="font-semibold tracking-tight text-xs text-white uppercase">
+              SQL DETECTIVE <span className="text-blue-400 font-mono text-[9px] ml-1">v0.5.0</span>
             </span>
           </div>
 
@@ -231,13 +281,18 @@ export default function GameScreen({
         {/* Global Stats indicators */}
         <div className="flex items-center space-x-4 text-xs font-mono">
           <div className="hidden sm:flex items-center space-x-1.5">
-            <span className="text-[10px] text-[#8B949E] uppercase">SOLVED:</span>
-            <span className="text-white font-bold">{progress.completedLevels.length}/15</span>
+            <span className="text-[10px] text-[#8B949E] uppercase">CRACKED:</span>
+            <span className="text-white font-bold">{progress.completedLevels.length}/50</span>
           </div>
 
           <div className="hidden sm:flex items-center space-x-1.5">
             <span className="text-[10px] text-[#8B949E] uppercase">CREDITS:</span>
-            <span className="text-blue-400 font-bold">{progress.totalScore} PTS</span>
+            <span className="text-emerald-400 font-bold">{progress.credits} cr</span>
+          </div>
+
+          <div className="hidden sm:flex items-center space-x-1.5">
+            <span className="text-[10px] text-[#8B949E] uppercase">EVIDENCE:</span>
+            <span className="text-amber-400 font-bold">{progress.evidencePoints} EP</span>
           </div>
 
           <div className="h-4 w-[1px] bg-[#30363D] hidden sm:block" />
@@ -246,7 +301,7 @@ export default function GameScreen({
             id="btn-toggle-sound-game"
             onClick={handleToggleSoundLocal}
             className="p-1 rounded bg-[#0D1117] hover:bg-[#30363D] border border-[#30363D] text-[#8B949E] hover:text-white transition cursor-pointer"
-            title={settings.soundEnabled ? "Mute Synthesizer" : "Unmute Synthesizer"}
+            title={settings.soundEnabled ? "Mute Sound" : "Unmute Sound"}
           >
             {settings.soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
@@ -254,8 +309,8 @@ export default function GameScreen({
           <div className="h-4 w-[1px] bg-[#30363D]"></div>
 
           <div className="flex items-center space-x-1.5 text-[10px]">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-            <span className="text-[#8B949E]">AGENT_LOGGED_IN</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+            <span className="text-[#8B949E] font-bold">Lvl {progress.level} AGENT</span>
           </div>
         </div>
       </header>
@@ -270,8 +325,8 @@ export default function GameScreen({
           <div id="briefing-card" className="border border-[#30363D] bg-[#161B22]/40 rounded-xl overflow-hidden shadow-lg">
             <div className="p-3 bg-[#161B22] border-b border-[#30363D] flex items-center justify-between">
               <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-widest">Case File #00{level.id}</span>
-              <span className="text-[9px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30 font-mono">
-                {level.id >= 8 ? 'ADVANCED' : level.id >= 4 ? 'INTERMEDIATE' : 'BASIC'}
+              <span className="text-[9px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30 font-mono font-bold">
+                {level.id >= 41 ? 'OVERLORD' : level.id >= 31 ? 'ADVANCED' : level.id >= 21 ? 'INTERMEDIATE' : level.id >= 11 ? 'OPERATIONAL' : 'BASIC'}
               </span>
             </div>
             
@@ -315,46 +370,71 @@ export default function GameScreen({
           {/* Table Schema Explorer */}
           <SchemaExplorer schema={level.databaseSchema} onTokenClick={handleInsertToken} />
 
-          {/* Interactive Hints Panel */}
+          {/* Interactive Evidence Hints Panel */}
           <div id="hints-panel" className="border border-[#30363D] bg-[#161B22]/40 rounded-xl overflow-hidden shadow-lg">
             <div className="p-3 bg-[#161B22] border-b border-[#30363D] flex items-center justify-between">
-              <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-widest">Intel Assistance</span>
-              <span className="text-[9px] font-mono text-[#8B949E] bg-[#0D1117] border border-[#30363D] px-1.5 py-0.5 rounded">
-                {3 - hintsUsedCount} OF 3 HINTS REMAINING
+              <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-widest">EVIDENCE BANK INTEL</span>
+              <span className="text-[9px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded font-bold uppercase">
+                {progress.evidencePoints} EP AVAILABLE
               </span>
             </div>
 
             <div className="p-4 space-y-3">
               <p className="text-[11px] text-[#8B949E] font-sans leading-relaxed">
-                Accessing hints will unmask syntactic help, but solves forfeit the <strong className="text-blue-400">+50 No-Hint Bonus</strong>.
+                Spend Evidence Points to unlock case files hint layers sequentially.
               </p>
 
-              {/* Revealed hint displays */}
-              {hintsUsedCount > 0 && (
-                <div className="space-y-2">
-                  {level.hints.slice(0, hintsUsedCount).map((hintText, index) => (
-                    <div key={index} className="flex items-start space-x-2 p-2.5 rounded bg-amber-500/5 border border-amber-500/15 text-[11px] text-amber-200 font-mono">
-                      <span className="text-amber-500 font-bold shrink-0">HINT {index + 1}:</span>
-                      <span className="leading-normal">{hintText}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="space-y-3 mt-2 font-mono">
+                {/* Hint 1: Table clue */}
+                {hintsUsedCount >= 1 ? (
+                  <div className="flex items-start space-x-2 p-2.5 rounded bg-amber-500/5 border border-amber-500/15 text-[11px] text-amber-200">
+                    <span className="text-amber-500 font-bold shrink-0">TABLE:</span>
+                    <span className="leading-normal">{level.hints[0]}</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleRequestHint(0, 3)}
+                    className="w-full py-2 bg-[#161B22] border border-[#30363D] hover:border-amber-500/30 hover:bg-amber-500/5 rounded transition text-[10px] font-bold tracking-widest uppercase text-amber-400 hover:text-amber-300 cursor-pointer flex items-center justify-center space-x-2"
+                  >
+                    <span>DECRYPT TABLE CLUE</span>
+                    <span className="bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded text-[8px]">3 EP</span>
+                  </button>
+                )}
 
-              {/* Request Hint button */}
-              {hintsUsedCount < 3 ? (
-                <button
-                  id="btn-request-hint"
-                  onClick={handleRequestHint}
-                  className="w-full py-2 bg-transparent border border-[#30363D] rounded hover:bg-[#30363D] transition-colors text-[10px] font-bold tracking-widest uppercase text-[#8B949E] hover:text-white cursor-pointer"
-                >
-                  Request Intel Hint
-                </button>
-              ) : (
-                <div className="text-center text-[10px] font-mono text-gray-500 uppercase tracking-wider py-1 border border-dashed border-[#30363D] rounded">
-                  All hints decrypted
-                </div>
-              )}
+                {/* Hint 2: Column clue */}
+                {hintsUsedCount >= 2 ? (
+                  <div className="flex items-start space-x-2 p-2.5 rounded bg-amber-500/5 border border-amber-500/15 text-[11px] text-amber-200">
+                    <span className="text-amber-500 font-bold shrink-0">COLUMNS:</span>
+                    <span className="leading-normal">{level.hints[1]}</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleRequestHint(1, 4)}
+                    disabled={hintsUsedCount < 1}
+                    className={`w-full py-2 border rounded transition text-[10px] font-bold tracking-widest uppercase flex items-center justify-center space-x-2 ${hintsUsedCount >= 1 ? 'bg-[#161B22] border-[#30363D] hover:border-amber-500/30 hover:bg-amber-500/5 text-amber-400 hover:text-amber-300 cursor-pointer' : 'bg-[#161B22]/40 border-[#30363D]/20 text-gray-600 cursor-not-allowed'}`}
+                  >
+                    <span>DECRYPT COLUMN CLUE</span>
+                    <span className="bg-amber-500/10 text-amber-400/70 px-1.5 py-0.5 rounded text-[8px]">4 EP</span>
+                  </button>
+                )}
+
+                {/* Hint 3: SQL Keyword Clue */}
+                {hintsUsedCount >= 3 ? (
+                  <div className="flex items-start space-x-2 p-2.5 rounded bg-amber-500/5 border border-amber-500/15 text-[11px] text-amber-200">
+                    <span className="text-amber-500 font-bold shrink-0">SYNTAX:</span>
+                    <span className="leading-normal">{level.hints[2]}</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleRequestHint(2, 5)}
+                    disabled={hintsUsedCount < 2}
+                    className={`w-full py-2 border rounded transition text-[10px] font-bold tracking-widest uppercase flex items-center justify-center space-x-2 ${hintsUsedCount >= 2 ? 'bg-[#161B22] border-[#30363D] hover:border-amber-500/30 hover:bg-amber-500/5 text-amber-400 hover:text-amber-300 cursor-pointer' : 'bg-[#161B22]/40 border-[#30363D]/20 text-gray-600 cursor-not-allowed'}`}
+                  >
+                    <span>DECRYPT SYNTAX CLUE</span>
+                    <span className="bg-amber-500/10 text-amber-400/70 px-1.5 py-0.5 rounded text-[8px]">5 EP</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -380,162 +460,100 @@ export default function GameScreen({
             
             {/* Panel Tabs / Title bar */}
             <div className="h-9 border-b border-[#30363D] flex items-center justify-between px-4 bg-[#0D1117] shrink-0">
-              <div className="flex items-center space-x-3 font-mono">
-                <span className="text-[11px] font-bold text-[#E6EDF3]">QUERY RESULTS</span>
-                {queryResult && (
-                  <span className="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded border border-green-500/20">200 OK</span>
-                )}
-                {queryError && (
-                  <span className="text-[9px] text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded border border-red-500/20">500 ERROR</span>
-                )}
-                {validationMessage && (
-                  <span className="text-[9px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-500/20">400 MISMATCH</span>
-                )}
-              </div>
-              <div className="text-[10px] font-mono text-[#484F58] hidden sm:block">
-                UTF-8 — COMPILED
+              <div className="flex items-center space-x-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-widest font-semibold">OUTPUT EVALUATION REGISTER</span>
               </div>
             </div>
 
-            {/* Content area: Tables or Empty state */}
-            <div className="flex-1 overflow-auto bg-[#0D1117]">
+            {/* Results Output Canvas */}
+            <div className="flex-1 overflow-auto p-4 bg-[#0D1117]">
+              
+              {/* Errors panel */}
+              {queryError && (
+                <div id="panel-error-output" className="p-4 border border-red-500/20 bg-red-500/5 rounded-xl flex items-start space-x-3 text-red-400 font-mono text-xs">
+                  <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <h5 className="font-bold uppercase tracking-wider text-red-500 mb-1">SQL PROCESS FAILURE</h5>
+                    <p className="leading-relaxed whitespace-pre-wrap">{queryError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Validation Warning Messages (Not matching actual result) */}
+              {validationMessage && !queryError && (
+                <div id="panel-validation-warning" className="p-4 border border-amber-500/20 bg-amber-500/5 rounded-xl flex items-start space-x-3 text-amber-300 font-mono text-xs mb-4">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <h5 className="font-bold uppercase tracking-wider text-amber-500 mb-1">DATA AUDIT WARNING</h5>
+                    <p className="leading-relaxed">{validationMessage}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Correct Success Alert */}
+              {isSuccess && (
+                <div id="panel-success-output" className="p-4 border border-emerald-500/20 bg-emerald-500/5 rounded-xl flex items-start space-x-3 text-emerald-400 font-mono text-xs mb-4">
+                  <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <h5 className="font-bold uppercase tracking-wider text-emerald-500 mb-1">DATA INTEGRITY COMPLIANT</h5>
+                    <p className="leading-relaxed">The SQL parser query matched the records exactly. Case solved!</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Dynamic SQL records Table view */}
               {queryResult ? (
-                <div className="min-w-full inline-block align-middle">
-                  <table className="w-full font-mono text-[11px] border-collapse">
-                    <thead>
-                      <tr className="bg-[#161B22] text-[#8B949E] sticky top-0 border-b border-[#30363D]">
-                        {queryResult.columns.map((col, idx) => (
-                          <th key={idx} className="text-left p-2.5 font-normal italic tracking-wider uppercase border-b border-[#30363D]">
-                            {col}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="text-[#E6EDF3] divide-y divide-[#30363D]">
-                      {queryResult.values.length > 0 ? (
-                        queryResult.values.map((row, rowIdx) => (
-                          <tr key={rowIdx} className="hover:bg-blue-500/5 transition duration-100">
-                            {row.map((cell, cellIdx) => (
-                              <td key={cellIdx} className="p-2.5 whitespace-nowrap">
-                                {cell === null || cell === undefined ? (
-                                  <span className="text-gray-600 italic font-bold">NULL</span>
-                                ) : (
-                                  String(cell)
-                                )}
-                              </td>
-                            ))}
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={queryResult.columns.length} className="p-8 text-center text-[11px] text-[#8B949E] uppercase tracking-wider italic">
-                            Empty result set (0 rows returned)
-                          </td>
+                <div className="border border-[#30363D] bg-[#161B22]/30 rounded-xl overflow-hidden font-mono text-[11px] shadow-lg max-w-full">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-[#161B22]/90 border-b border-[#30363D] text-[#8B949E]">
+                          {queryResult.columns.map((col, idx) => (
+                            <th key={idx} className="px-4 py-2 font-bold uppercase tracking-wider border-r border-[#30363D]/50 last:border-0">{col}</th>
+                          ))}
                         </tr>
-                      )}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {queryResult.values.length > 0 ? (
+                          queryResult.values.map((row, rowIdx) => (
+                            <tr key={rowIdx} className="border-b border-[#30363D]/50 hover:bg-[#161B22]/40 transition last:border-0">
+                              {row.map((val, valIdx) => (
+                                <td key={valIdx} className="px-4 py-2 border-r border-[#30363D]/30 last:border-0 truncate max-w-[200px]" title={String(val)}>
+                                  {val === null ? <span className="text-gray-600 italic">NULL</span> : String(val)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={queryResult.columns.length} className="px-4 py-6 text-center text-gray-500 italic">
+                              Query succeeded, but returned 0 rows of data.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="p-2 border-t border-[#30363D]/60 bg-[#161B22]/10 text-[9px] text-[#8B949E] text-right">
+                    {queryResult.values.length} RECORD(S) RETRIEVED SECURELY
+                  </div>
                 </div>
               ) : (
                 !queryError && !validationMessage && (
-                  <div className="flex flex-col items-center justify-center h-full text-center py-10">
-                    <div className="w-10 h-10 rounded-xl bg-[#161B22] flex items-center justify-center text-[#8B949E] mb-3 border border-[#30363D]">
-                      <Play className="w-4 h-4 fill-current" />
+                  <div className="flex flex-col items-center justify-center py-20 text-center text-[#8B949E] font-mono space-y-3">
+                    <Eye className="w-10 h-10 text-[#30363D] animate-pulse" />
+                    <div>
+                      <p className="text-xs font-semibold">WORKSPACE READY</p>
+                      <p className="text-[10px] text-gray-600 mt-1 uppercase">Execute standard SQL query to render output matrix streams...</p>
                     </div>
-                    <span className="text-xs font-mono text-[#8B949E] uppercase tracking-wider">Awaiting Execution</span>
-                    <p className="text-[10px] text-gray-600 font-mono mt-1 max-w-xs">
-                      Compose your database query above and click "Run Query" or hit "Ctrl+Enter" to process suspect intelligence.
-                    </p>
                   </div>
                 )
-              )}
-            </div>
-
-            {/* Analysis/Feedback area (Sticky / Grounded at the bottom) */}
-            <div className="border-t border-[#30363D] bg-[#161B22] p-4 flex flex-col shrink-0 min-h-[160px] max-h-[220px] overflow-y-auto">
-              <span className="text-[10px] font-bold text-[#8B949E] mb-2 uppercase tracking-wider font-mono">System Analysis</span>
-              
-              {isSuccess && (
-                <div id="validation-success-block" className="bg-[#0D1117] border border-green-500/30 rounded p-3.5 flex-1">
-                  <div className="flex items-start space-x-3">
-                    <div className="w-5 h-5 rounded-full bg-green-500/20 text-green-500 flex items-center justify-center shrink-0 text-xs">✔</div>
-                    <div className="flex-1">
-                      <h5 className="text-[11px] font-bold text-green-400 mb-1">CASE SOLVED</h5>
-                      <p className="text-[11px] text-[#8B949E] leading-relaxed">
-                        The executed query successfully solved this level. You identified the suspect information and correctly compiled the data.
-                      </p>
-                      
-                      {scoreEarnedInLevel !== null && (
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2.5 pt-2 border-t border-[#30363D] text-[10px] font-mono text-gray-500">
-                          <span>Base: <strong className="text-white">+100 PTS</strong></span>
-                          {(progress.attemptsCount[level.id] || 1) <= 1 && (
-                            <span>First Attempt: <strong className="text-white">+25 PTS</strong></span>
-                          )}
-                          {(progress.hintsUsedCount[level.id] || 0) === 0 && (
-                            <span>No Hints: <strong className="text-white">+50 PTS</strong></span>
-                          )}
-                          <span className="text-blue-400 font-bold">Total: +{scoreEarnedInLevel} CREDITS</span>
-                        </div>
-                      )}
-
-                      <div className="mt-3">
-                        <button
-                          id="btn-next-level"
-                          onClick={handleNextLevel}
-                          className="px-3 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-[10px] font-bold shadow-lg shadow-green-900/20 transition cursor-pointer"
-                        >
-                          {level.id === 15 ? 'COMPLETE ALL CASES' : level.id === 10 ? 'COMPLETE STANDARD (PROCEED TO ADVANCED)' : 'PROCEED TO NEXT LEVEL'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {validationMessage && (
-                <div id="validation-error-block" className="bg-[#0D1117] border border-amber-500/30 rounded p-3.5 flex-1">
-                  <div className="flex items-start space-x-3">
-                    <div className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0 text-xs font-bold">!</div>
-                    <div className="flex-1">
-                      <h5 className="text-[11px] font-bold text-amber-500 mb-1">DATA VERIFICATION FAIL</h5>
-                      <p className="text-[11px] text-[#8B949E] leading-relaxed font-mono">
-                        {validationMessage}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {queryError && (
-                <div id="query-sql-error-block" className="bg-[#0D1117] border border-red-500/30 rounded p-3.5 flex-1">
-                  <div className="flex items-start space-x-3">
-                    <div className="w-5 h-5 rounded-full bg-red-500/20 text-red-500 flex items-center justify-center shrink-0 text-xs font-bold">✖</div>
-                    <div className="flex-1">
-                      <h5 className="text-[11px] font-bold text-red-400 mb-1">COMPILER ERROR</h5>
-                      <pre className="text-[11px] text-red-300 font-mono whitespace-pre-wrap leading-normal">
-                        {queryError}
-                      </pre>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {!queryResult && !queryError && !validationMessage && (
-                <div className="bg-[#0D1117] border border-[#30363D] rounded p-3.5 flex-1">
-                  <div className="flex items-start space-x-3">
-                    <div className="w-5 h-5 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0 text-xs font-bold">?</div>
-                    <div className="flex-1">
-                      <h5 className="text-[11px] font-bold text-blue-400 mb-1">AWAITING COMPILATION</h5>
-                      <p className="text-[11px] text-[#8B949E] leading-relaxed font-sans">
-                        No queries have been executed yet. Formulate your investigation queries in the editor above and hit <span className="text-white font-mono bg-[#161B22] px-1 rounded">EXECUTE</span>.
-                      </p>
-                    </div>
-                  </div>
-                </div>
               )}
 
             </div>
           </div>
+
         </section>
       </main>
 
@@ -544,19 +562,20 @@ export default function GameScreen({
         <div className="flex items-center space-x-6">
           <div className="flex items-center space-x-2">
             <span className="text-[10px] text-[#8B949E] uppercase font-bold tracking-tight">
-              {level.id >= 11 ? 'Advanced Mission' : 'Standard Case'}
+              {level.id >= 41 ? 'Mainframe Override' : level.id >= 31 ? 'Network Intrusion' : level.id >= 21 ? 'Financial Forensics' : level.id >= 11 ? 'Decryption Protocol' : 'Standard Intrusion'}
             </span>
             <div className="flex space-x-1">
-              {Array.from({ length: level.id >= 11 ? 5 : 10 }).map((_, idx) => {
-                const targetId = level.id >= 11 ? 11 + idx : 1 + idx;
+              {Array.from({ length: 10 }).map((_, idx) => {
+                const chapterNumber = Math.ceil(level.id / 10);
+                const targetId = (chapterNumber - 1) * 10 + 1 + idx;
                 return (
                   <div
                     key={idx}
                     className={`w-4 h-1 rounded-full ${
                       targetId < level.id
-                        ? level.id >= 11 ? 'bg-amber-500' : 'bg-blue-500'
+                        ? chapterNumber === 5 ? 'bg-amber-500' : chapterNumber === 4 ? 'bg-purple-500' : chapterNumber === 3 ? 'bg-emerald-500' : chapterNumber === 2 ? 'bg-indigo-500' : 'bg-blue-500'
                         : targetId === level.id
-                        ? level.id >= 11 ? 'bg-amber-500 animate-pulse' : 'bg-blue-500 animate-pulse'
+                        ? 'bg-white animate-pulse'
                         : 'bg-[#30363D]'
                     }`}
                   />
@@ -564,18 +583,18 @@ export default function GameScreen({
               })}
             </div>
             <span className="text-[11px] font-mono text-white ml-2">
-              {level.id >= 11 ? `${level.id - 10}/5` : `${level.id}/10`}
+              {((level.id - 1) % 10) + 1}/10
             </span>
           </div>
         </div>
         <div className="flex items-center space-x-6">
           <div className="flex space-x-3">
-            <span className="text-[#8B949E]">SCORE:</span>
-            <span className="text-white font-bold">{String(progress.totalScore).padStart(5, '0')}</span>
+            <span className="text-[#8B949E]">LEDGER:</span>
+            <span className="text-white font-bold">{progress.credits} cr</span>
           </div>
           <div className="flex space-x-3">
-            <span className="text-[#8B949E]">HINTS:</span>
-            <span className="text-orange-400">{(3 - hintsUsedCount).toString().padStart(2, '0')} AVAILABLE</span>
+            <span className="text-[#8B949E]">EVIDENCE:</span>
+            <span className="text-amber-400 font-bold">{progress.evidencePoints} EP</span>
           </div>
           <div className="flex space-x-2 items-center border border-[#30363D] rounded-full px-2 py-0.5 bg-[#161B22] hidden sm:flex">
             <span className="text-[#8B949E]">LATENCY:</span>
@@ -583,6 +602,23 @@ export default function GameScreen({
           </div>
         </div>
       </footer>
+
+      <CaseSolvedModal
+        isOpen={isSolvedModalOpen}
+        onClose={() => setIsSolvedModalOpen(false)}
+        levelId={level.id}
+        levelTitle={level.title}
+        scoreEarned={scoreEarnedInLevel}
+        attemptsCount={progress.attemptsCount[level.id] || 1}
+        hintsUsed={hintsUsedCount}
+        onNextCase={handleNextLevel}
+        xpEarned={lastRewards?.xpEarned || 100}
+        creditsEarned={lastRewards?.creditsEarned || 100}
+        epEarned={lastRewards?.epEarned || 10}
+        didLevelUp={lastRewards?.didLevelUp || false}
+        newLevel={lastRewards?.newLevel || 1}
+        newAchievements={lastRewards?.newAchievements}
+      />
     </div>
   );
 }

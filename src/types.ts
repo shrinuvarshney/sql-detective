@@ -41,6 +41,25 @@ export interface GameProgress {
   hintsUsedCount: { [levelId: number]: number }; // Maps levelId to number of hints used (0-3)
   levelScores: { [levelId: number]: number }; // Score obtained per level
   attemptsCount: { [levelId: number]: number }; // Maps levelId to count of queries executed
+  
+  // Custom Progression Systems
+  username?: string;
+  selectedAvatar?: string;
+  xp: number;
+  level: number;
+  credits: number;
+  evidencePoints: number;
+  unlockedAvatars: string[];
+  achievements: string[];
+  streak: number;
+  lastActiveDate?: string;
+  statistics: {
+    casesSolved: number;
+    hintsUnlocked: number;
+    totalAttempts: number;
+    creditsSpent: number;
+    highestStreak: number;
+  };
 }
 
 export interface GameSettings {

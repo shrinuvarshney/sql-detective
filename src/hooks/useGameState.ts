@@ -1,18 +1,102 @@
 import { useState, useEffect } from 'react';
 import { GameProgress, GameSettings, Level } from '../types';
 import { playSound } from '../utils/audio';
+import { onAuthStateChanged, User, signOut } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../database/firebase';
+import { levels } from '../levels/levelsData';
 
 const STORAGE_PROGRESS_KEY = 'sql_detective_progress_v1';
 const STORAGE_SETTINGS_KEY = 'sql_detective_settings_v1';
 
-const defaultProgress: GameProgress & { attemptsCount: { [levelId: number]: number } } = {
+// Detailed error handling for Firestore following the skill guide
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  // We only throw a fatal error on true Firestore permission/security rule violations (as mandated by the security debugging guidelines).
+  // Non-permission errors such as client being offline, network timeouts, or quota exceeded should be handled gracefully.
+  const isPermissionError = 
+    errorMessage.toLowerCase().includes('permission') || 
+    errorMessage.toLowerCase().includes('denied') || 
+    errorMessage.toLowerCase().includes('insufficient');
+
+  const errInfo: FirestoreErrorInfo = {
+    error: errorMessage,
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+
+  if (isPermissionError) {
+    console.error('Firestore Permission Error: ', JSON.stringify(errInfo));
+    throw new Error(JSON.stringify(errInfo));
+  } else {
+    console.warn('Firestore Non-Fatal Error (Offline/Network/Quota): ', JSON.stringify(errInfo));
+  }
+}
+
+export const defaultProgress: GameProgress = {
   completedLevels: [],
   highestScore: 0,
   totalScore: 0,
   currentLevelId: 1,
   hintsUsedCount: {},
   levelScores: {},
-  attemptsCount: {}
+  attemptsCount: {},
+  
+  // Custom RPG progression fields
+  username: '',
+  selectedAvatar: 'detective_classic',
+  xp: 0,
+  level: 1,
+  credits: 100, // Starting credits for buying avatars
+  evidencePoints: 20, // Starting Evidence Points for unlocking hints
+  unlockedAvatars: ['detective_classic', 'analyst_cyber', 'agent_field', 'technician_net'],
+  achievements: [],
+  streak: 1,
+  lastActiveDate: new Date().toISOString().split('T')[0],
+  statistics: {
+    casesSolved: 0,
+    hintsUnlocked: 0,
+    totalAttempts: 0,
+    creditsSpent: 0,
+    highestStreak: 1
+  }
 };
 
 const defaultSettings: GameSettings = {
@@ -21,16 +105,22 @@ const defaultSettings: GameSettings = {
 };
 
 export function useGameState() {
-  const [progress, setProgress] = useState(() => {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  const [progress, setProgress] = useState<GameProgress>(() => {
     if (typeof window === 'undefined') return defaultProgress;
     const stored = localStorage.getItem(STORAGE_PROGRESS_KEY);
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        // Migrate or ensure all fields exist
         return {
           ...defaultProgress,
-          ...parsed
+          ...parsed,
+          statistics: {
+            ...defaultProgress.statistics,
+            ...(parsed.statistics || {})
+          }
         };
       } catch (e) {
         return defaultProgress;
@@ -55,7 +145,70 @@ export function useGameState() {
     return defaultSettings;
   });
 
-  // Sync to local storage
+  // Track Firebase Authentication changes and sync database
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        const path = `users/${currentUser.uid}`;
+        try {
+          const docRef = doc(db, 'users', currentUser.uid);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const cloudProgress = docSnap.data() as GameProgress;
+            
+            // Sync Daily Streak when loading progress
+            const today = new Date().toISOString().split('T')[0];
+            let updatedStreak = cloudProgress.streak || 1;
+            let updatedHighestStreak = cloudProgress.statistics?.highestStreak || 1;
+            
+            if (cloudProgress.lastActiveDate && cloudProgress.lastActiveDate !== today) {
+              const lastActive = new Date(cloudProgress.lastActiveDate);
+              const currentDate = new Date(today);
+              const diffTime = Math.abs(currentDate.getTime() - lastActive.getTime());
+              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              
+              if (diffDays === 1) {
+                updatedStreak += 1;
+              } else if (diffDays > 1) {
+                updatedStreak = 1;
+              }
+              updatedHighestStreak = Math.max(updatedHighestStreak, updatedStreak);
+            }
+            
+            const mergedProgress: GameProgress = {
+              ...defaultProgress,
+              ...cloudProgress,
+              streak: updatedStreak,
+              lastActiveDate: today,
+              username: cloudProgress.username || currentUser.email?.split('@')[0] || 'Agent',
+              statistics: {
+                ...defaultProgress.statistics,
+                ...(cloudProgress.statistics || {}),
+                highestStreak: updatedHighestStreak
+              }
+            };
+            setProgress(mergedProgress);
+          } else {
+            // First time logging in on this account - populate cloud with any local progress
+            const initialProgress: GameProgress = {
+              ...progress,
+              username: progress.username || currentUser.email?.split('@')[0] || 'Agent',
+              lastActiveDate: new Date().toISOString().split('T')[0]
+            };
+            await setDoc(docRef, initialProgress);
+            setProgress(initialProgress);
+          }
+        } catch (e) {
+          handleFirestoreError(e, OperationType.GET, path);
+        }
+      }
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync state to local storage for instant offline access
   useEffect(() => {
     localStorage.setItem(STORAGE_PROGRESS_KEY, JSON.stringify(progress));
   }, [progress]);
@@ -63,6 +216,25 @@ export function useGameState() {
   useEffect(() => {
     localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  // Sync state to Cloud Firestore when updated
+  useEffect(() => {
+    if (user && !authLoading) {
+      const syncToCloud = async () => {
+        const path = `users/${user.uid}`;
+        try {
+          const docRef = doc(db, 'users', user.uid);
+          await setDoc(docRef, progress);
+        } catch (e) {
+          handleFirestoreError(e, OperationType.WRITE, path);
+        }
+      };
+      
+      // Debounce slightly to avoid aggressive writes
+      const timeoutId = setTimeout(syncToCloud, 500);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [progress, user, authLoading]);
 
   // Audio helper integrated with settings
   const triggerSound = (type: 'click' | 'success' | 'wrong' | 'complete') => {
@@ -74,7 +246,7 @@ export function useGameState() {
     triggerSound('click');
   };
 
-  // Register an execution attempt (to track first-attempt bonus)
+  // Register an execution attempt
   const registerAttempt = (levelId: number) => {
     setProgress(prev => {
       const currentAttempts = prev.attemptsCount[levelId] || 0;
@@ -83,74 +255,236 @@ export function useGameState() {
         attemptsCount: {
           ...prev.attemptsCount,
           [levelId]: currentAttempts + 1
+        },
+        statistics: {
+          ...prev.statistics,
+          totalAttempts: (prev.statistics.totalAttempts || 0) + 1
         }
       };
     });
   };
 
-  // Use a hint
-  const useHint = (levelId: number): number => {
-    let finalHintNum = 0;
+  // Spend Evidence Points to Unlock a Hint
+  const spendEvidencePointsForHint = (levelId: number, hintIndex: number, cost: number): boolean => {
+    let success = false;
     setProgress(prev => {
       const currentHints = prev.hintsUsedCount[levelId] || 0;
-      if (currentHints >= 3) {
-        finalHintNum = 3;
+      // Already unlocked this level of hint or higher
+      if (currentHints > hintIndex) {
+        success = true;
         return prev;
       }
-      finalHintNum = currentHints + 1;
+      if (prev.evidencePoints < cost) {
+        success = false;
+        return prev;
+      }
+      success = true;
       return {
         ...prev,
+        evidencePoints: prev.evidencePoints - cost,
         hintsUsedCount: {
           ...prev.hintsUsedCount,
-          [levelId]: finalHintNum
+          [levelId]: hintIndex + 1
+        },
+        statistics: {
+          ...prev.statistics,
+          hintsUnlocked: (prev.statistics.hintsUnlocked || 0) + 1
         }
       };
     });
-    triggerSound('click');
-    return finalHintNum;
+    if (success) triggerSound('click');
+    return success;
   };
 
-  // Complete a level and calculate its score
-  const completeLevel = (levelId: number): { scoreEarned: number; isFirstTime: boolean } => {
+  // Buy or unlock a premium avatar
+  const purchaseAvatar = (avatarId: string, cost: number): boolean => {
+    let success = false;
+    setProgress(prev => {
+      if (prev.unlockedAvatars.includes(avatarId)) {
+        success = true;
+        return prev;
+      }
+      if (prev.credits < cost) {
+        success = false;
+        return prev;
+      }
+      
+      const newUnlocked = [...prev.unlockedAvatars, avatarId];
+      const achievements = [...prev.achievements];
+      
+      // Collector achievement: Unlock 3 premium avatars (unlocked size >= 7 because 4 are default)
+      if (newUnlocked.length >= 7 && !achievements.includes('collector')) {
+        achievements.push('collector');
+      }
+
+      success = true;
+      return {
+        ...prev,
+        credits: prev.credits - cost,
+        unlockedAvatars: newUnlocked,
+        achievements,
+        statistics: {
+          ...prev.statistics,
+          creditsSpent: (prev.statistics.creditsSpent || 0) + cost
+        }
+      };
+    });
+    if (success) triggerSound('success');
+    return success;
+  };
+
+  // Update profile details (username & avatar selection)
+  const updateProfile = (username: string, selectedAvatar: string) => {
+    setProgress(prev => ({
+      ...prev,
+      username: username.trim() || prev.username,
+      selectedAvatar: prev.unlockedAvatars.includes(selectedAvatar) ? selectedAvatar : prev.selectedAvatar
+    }));
+    triggerSound('click');
+  };
+
+  // Complete a level and calculate its score, rewards, XP, level up, and achievements
+  const completeLevel = (levelId: number): {
+    scoreEarned: number;
+    xpEarned: number;
+    creditsEarned: number;
+    epEarned: number;
+    isFirstTime: boolean;
+    didLevelUp: boolean;
+    newLevel: number;
+    newAchievements: string[];
+  } => {
     let scoreEarned = 0;
+    let xpEarned = 0;
+    let creditsEarned = 0;
+    let epEarned = 0;
     let isFirstTime = false;
+    let didLevelUp = false;
+    let finalNewLevel = 1;
+    let newlyUnlockedAchievements: string[] = [];
 
     setProgress(prev => {
       const alreadyCompleted = prev.completedLevels.includes(levelId);
       isFirstTime = !alreadyCompleted;
 
       if (!isFirstTime) {
-        // No extra score for re-completing, just return current state
+        // No extra score/rewards for re-completing, just return current state
         return prev;
       }
 
-      // Calculate score for this level completion
-      // Correct Answer Base: +100
+      // 1. Score Calculation (credits score representation)
       let levelScore = 100;
-
-      // First attempt bonus: +25 (meaning they solved it on their 1st attempt)
       const attempts = prev.attemptsCount[levelId] || 1;
       const isFirstAttempt = attempts <= 1;
       if (isFirstAttempt) {
         levelScore += 25;
       }
 
-      // No hints used bonus: +50
       const hintsUsed = prev.hintsUsedCount[levelId] || 0;
       const noHintsUsed = hintsUsed === 0;
       if (noHintsUsed) {
         levelScore += 50;
       }
-
       scoreEarned = levelScore;
 
+      // 2. XP & Credits & Evidence Points Calculation
+      let levelXp = 100;
+      if (isFirstAttempt) levelXp += 50; // first attempt bonus XP
+      xpEarned = levelXp;
+
+      let levelCredits = 100;
+      if (noHintsUsed) levelCredits += 50; // no hint bonus Credits
+      creditsEarned = levelCredits;
+
+      let levelEp = 10;
+      if (isFirstAttempt) levelEp += 5; // first attempt bonus EP
+      epEarned = levelEp;
+
+      // Update basic fields
       const newCompleted = [...prev.completedLevels, levelId];
       const newLevelScores = { ...prev.levelScores, [levelId]: levelScore };
       const newTotalScore = prev.totalScore + levelScore;
       const newHighestScore = Math.max(prev.highestScore, newTotalScore);
 
-      // Advance level pointer if not at max (15 levels total)
-      const nextLevelId = levelId < 15 ? levelId + 1 : levelId;
+      // Handle XP Progression and Level Up
+      let currentXp = prev.xp + levelXp;
+      let userLevel = prev.level;
+      let levelUpThreshold = userLevel * 500;
+      
+      while (currentXp >= levelUpThreshold) {
+        currentXp -= levelUpThreshold;
+        userLevel += 1;
+        didLevelUp = true;
+        levelUpThreshold = userLevel * 500;
+      }
+      finalNewLevel = userLevel;
+
+      // Check Achievements
+      const currentAchievements = [...prev.achievements];
+      
+      // Check first case solved
+      if (newCompleted.length === 1 && !currentAchievements.includes('first_case')) {
+        currentAchievements.push('first_case');
+        newlyUnlockedAchievements.push('first_case');
+      }
+
+      // Check Chapter completions
+      // Chapter 1 (Standard Intrusion): levels 1-10
+      const ch1Completed = [1,2,3,4,5,6,7,8,9,10].every(id => newCompleted.includes(id));
+      if (ch1Completed && !currentAchievements.includes('chapter_1')) {
+        currentAchievements.push('chapter_1');
+        newlyUnlockedAchievements.push('chapter_1');
+      }
+
+      // Chapter 2 (Decryption Protocol): levels 11-20
+      const ch2Completed = [11,12,13,14,15,16,17,18,19,20].every(id => newCompleted.includes(id));
+      if (ch2Completed && !currentAchievements.includes('chapter_2')) {
+        currentAchievements.push('chapter_2');
+        newlyUnlockedAchievements.push('chapter_2');
+      }
+
+      // Chapter 3 (Financial Forensics): levels 21-30
+      const ch3Completed = [21,22,23,24,25,26,27,28,29,30].every(id => newCompleted.includes(id));
+      if (ch3Completed && !currentAchievements.includes('chapter_3')) {
+        currentAchievements.push('chapter_3');
+        newlyUnlockedAchievements.push('chapter_3');
+      }
+
+      // Chapter 4 (Network Intrusion): levels 31-40
+      const ch4Completed = [31,32,33,34,35,36,37,38,39,40].every(id => newCompleted.includes(id));
+      if (ch4Completed && !currentAchievements.includes('chapter_4')) {
+        currentAchievements.push('chapter_4');
+        newlyUnlockedAchievements.push('chapter_4');
+      }
+
+      // Chapter 5 (Mainframe Override): levels 41-50
+      const ch5Completed = [41,42,43,44,45,46,47,48,49,50].every(id => newCompleted.includes(id));
+      if (ch5Completed && !currentAchievements.includes('chapter_5')) {
+        currentAchievements.push('chapter_5');
+        newlyUnlockedAchievements.push('chapter_5');
+      }
+
+      // Pure Analyst (First attempt, no hints)
+      if (isFirstAttempt && noHintsUsed && !currentAchievements.includes('unsparing')) {
+        currentAchievements.push('unsparing');
+        newlyUnlockedAchievements.push('unsparing');
+      }
+
+      // Tycoon check (total score >= 1000 or credit savings >= 1000)
+      const finalCredits = prev.credits + levelCredits;
+      if (finalCredits >= 1000 && !currentAchievements.includes('tycoon')) {
+        currentAchievements.push('tycoon');
+        newlyUnlockedAchievements.push('tycoon');
+      }
+
+      // Streak check
+      if (prev.streak >= 3 && !currentAchievements.includes('streak_3')) {
+        currentAchievements.push('streak_3');
+        newlyUnlockedAchievements.push('streak_3');
+      }
+
+      // Advance level pointer if not at max
+      const nextLevelId = levelId < levels.length ? levelId + 1 : levelId;
 
       return {
         ...prev,
@@ -158,11 +492,30 @@ export function useGameState() {
         levelScores: newLevelScores,
         totalScore: newTotalScore,
         highestScore: newHighestScore,
-        currentLevelId: nextLevelId
+        currentLevelId: nextLevelId,
+        xp: currentXp,
+        level: userLevel,
+        credits: finalCredits,
+        evidencePoints: prev.evidencePoints + levelEp,
+        achievements: currentAchievements,
+        statistics: {
+          ...prev.statistics,
+          casesSolved: newCompleted.length,
+          highestStreak: Math.max(prev.statistics.highestStreak || 1, prev.streak)
+        }
       };
     });
 
-    return { scoreEarned, isFirstTime };
+    return {
+      scoreEarned,
+      xpEarned,
+      creditsEarned,
+      epEarned,
+      isFirstTime,
+      didLevelUp,
+      newLevel: finalNewLevel,
+      newAchievements: newlyUnlockedAchievements
+    };
   };
 
   const selectLevel = (levelId: number) => {
@@ -178,15 +531,26 @@ export function useGameState() {
     triggerSound('click');
   };
 
+  const handleLogout = async () => {
+    await signOut(auth);
+    setProgress(defaultProgress);
+    triggerSound('click');
+  };
+
   return {
     progress,
     settings,
-    useHint,
+    user,
+    authLoading,
+    spendEvidencePointsForHint,
+    purchaseAvatar,
+    updateProfile,
     registerAttempt,
     completeLevel,
     selectLevel,
     resetProgress,
     toggleSound,
-    triggerSound
+    triggerSound,
+    logout: handleLogout
   };
 }

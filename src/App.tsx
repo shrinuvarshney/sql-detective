@@ -3,24 +3,32 @@ import MainMenu from './components/MainMenu';
 import LevelSelect from './components/LevelSelect';
 import SettingsModal from './components/SettingsModal';
 import GameScreen from './components/GameScreen';
+import AuthScreen from './components/AuthScreen';
+import ProfileView from './components/ProfileView';
 import { useGameState } from './hooks/useGameState';
 import { levels } from './levels/levelsData';
 import { getDatabase } from './database/dbManager';
+import { Terminal, Cpu } from 'lucide-react';
 
 export default function App() {
-  const [view, setView] = useState<'menu' | 'level-select' | 'game'>('menu');
+  const [view, setView] = useState<'menu' | 'level-select' | 'game' | 'profile'>('menu');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const {
     progress,
     settings,
-    useHint,
+    user,
+    authLoading,
+    spendEvidencePointsForHint,
+    purchaseAvatar,
+    updateProfile,
     registerAttempt,
     completeLevel,
     selectLevel,
     resetProgress,
     toggleSound,
-    triggerSound
+    triggerSound,
+    logout
   } = useGameState();
 
   // Pre-initialize SQL database in the background on app load
@@ -51,12 +59,35 @@ export default function App() {
     triggerSound('click');
   };
 
+  // 1. Loading state for Firebase Auth handshake
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0D1117] text-gray-100 flex flex-col items-center justify-center relative p-6 select-none font-mono">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#161B22_1px,transparent_1px),linear-gradient(to_bottom,#161B22_1px,transparent_1px)] bg-[size:4rem_4rem] opacity-25" />
+        <div className="z-10 flex flex-col items-center space-y-4">
+          <Cpu className="w-10 h-10 text-blue-500 animate-spin" />
+          <div className="text-center space-y-1">
+            <h3 className="text-sm font-bold tracking-wider text-white">SECURE COGNITIVE ACCESS HANDSHAKE</h3>
+            <p className="text-[10px] text-gray-500 uppercase tracking-widest animate-pulse">Synchronizing cloud records and agent profiles...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Auth Gate: Show beautiful Cyber Terminal Login if no user is authenticated
+  if (!user) {
+    return <AuthScreen onSuccess={() => triggerSound('success')} />;
+  }
+
   return (
     <div className="min-h-screen bg-[#0D1117] text-gray-100 selection:bg-blue-500/30 selection:text-white">
       {view === 'menu' && (
         <MainMenu
           progress={progress}
           settings={settings}
+          user={user}
+          onLogout={logout}
           onStart={handleStartInvestigation}
           onContinue={handleContinueInvestigation}
           onOpenLevelSelect={() => {
@@ -68,6 +99,10 @@ export default function App() {
             triggerSound('click');
           }}
           onSelectLevel={handleLevelSelected}
+          onOpenProfile={() => {
+            setView('profile');
+            triggerSound('click');
+          }}
         />
       )}
 
@@ -94,9 +129,22 @@ export default function App() {
           onToggleSound={toggleSound}
           onResetProgress={resetProgress}
           onSelectLevel={(id) => selectLevel(id)}
-          useHint={useHint}
+          spendEvidencePointsForHint={spendEvidencePointsForHint}
           registerAttempt={registerAttempt}
           completeLevel={completeLevel}
+        />
+      )}
+
+      {view === 'profile' && (
+        <ProfileView
+          progress={progress}
+          onUpdateProfile={updateProfile}
+          onPurchaseAvatar={purchaseAvatar}
+          onBack={() => {
+            setView('menu');
+            triggerSound('click');
+          }}
+          triggerSound={triggerSound}
         />
       )}
 
@@ -115,4 +163,3 @@ export default function App() {
     </div>
   );
 }
-
