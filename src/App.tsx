@@ -5,14 +5,16 @@ import SettingsModal from './components/SettingsModal';
 import GameScreen from './components/GameScreen';
 import AuthScreen from './components/AuthScreen';
 import ProfileView from './components/ProfileView';
+import LandingPage from './components/LandingPage';
 import { useGameState } from './hooks/useGameState';
 import { levels } from './levels/levelsData';
 import { getDatabase } from './database/dbManager';
 import { Terminal, Cpu } from 'lucide-react';
 
 export default function App() {
-  const [view, setView] = useState<'menu' | 'level-select' | 'game' | 'profile'>('menu');
+  const [view, setView] = useState<'landing' | 'menu' | 'level-select' | 'game' | 'profile' | 'auth'>('landing');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [redirectAfterAuth, setRedirectAfterAuth] = useState<'menu' | 'game'>('menu');
 
   const {
     progress,
@@ -38,6 +40,21 @@ export default function App() {
     });
   }, []);
 
+  // Sync view states when auth state loads or changes
+  useEffect(() => {
+    if (!authLoading) {
+      if (user) {
+        if (view === 'landing' || view === 'auth') {
+          setView('menu');
+        }
+      } else {
+        if (view !== 'landing' && view !== 'auth') {
+          setView('landing');
+        }
+      }
+    }
+  }, [user, authLoading]);
+
   const activeLevel = levels.find(l => l.id === progress.currentLevelId) || levels[0];
 
   const handleStartInvestigation = () => {
@@ -59,6 +76,44 @@ export default function App() {
     triggerSound('click');
   };
 
+  const handleStartInvestigationFromLanding = () => {
+    if (user) {
+      // Already logged in - skip auth and open game immediately
+      setView('game');
+      triggerSound('click');
+    } else {
+      setRedirectAfterAuth('game');
+      setView('auth');
+      triggerSound('click');
+    }
+  };
+
+  const handleOpenDashboardFromLanding = () => {
+    if (user) {
+      setView('menu');
+      triggerSound('click');
+    } else {
+      setRedirectAfterAuth('menu');
+      setView('auth');
+      triggerSound('click');
+    }
+  };
+
+  const handleOpenAuthFromLanding = () => {
+    setRedirectAfterAuth('menu');
+    setView('auth');
+    triggerSound('click');
+  };
+
+  const handleAuthSuccess = () => {
+    triggerSound('success');
+    if (redirectAfterAuth === 'game') {
+      setView('game');
+    } else {
+      setView('menu');
+    }
+  };
+
   // 1. Loading state for Firebase Auth handshake
   if (authLoading) {
     return (
@@ -75,14 +130,28 @@ export default function App() {
     );
   }
 
-  // 2. Auth Gate: Show beautiful Cyber Terminal Login if no user is authenticated
-  if (!user) {
-    return <AuthScreen onSuccess={() => triggerSound('success')} />;
-  }
-
   return (
     <div className="min-h-screen bg-[#0D1117] text-gray-100 selection:bg-blue-500/30 selection:text-white">
-      {view === 'menu' && (
+      {view === 'landing' && (
+        <LandingPage
+          user={user}
+          onStartInvestigation={handleStartInvestigationFromLanding}
+          onOpenDashboard={handleOpenDashboardFromLanding}
+          onOpenAuth={handleOpenAuthFromLanding}
+        />
+      )}
+
+      {view === 'auth' && (
+        <AuthScreen
+          onSuccess={handleAuthSuccess}
+          onBack={() => {
+            setView('landing');
+            triggerSound('click');
+          }}
+        />
+      )}
+
+      {view === 'menu' && user && (
         <MainMenu
           progress={progress}
           settings={settings}
@@ -106,7 +175,7 @@ export default function App() {
         />
       )}
 
-      {view === 'level-select' && (
+      {view === 'level-select' && user && (
         <LevelSelect
           progress={progress}
           onSelectLevel={handleLevelSelected}
@@ -117,7 +186,7 @@ export default function App() {
         />
       )}
 
-      {view === 'game' && (
+      {view === 'game' && user && (
         <GameScreen
           level={activeLevel}
           progress={progress}
@@ -135,7 +204,7 @@ export default function App() {
         />
       )}
 
-      {view === 'profile' && (
+      {view === 'profile' && user && (
         <ProfileView
           progress={progress}
           onUpdateProfile={updateProfile}

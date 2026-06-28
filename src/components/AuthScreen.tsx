@@ -10,9 +10,10 @@ import { Terminal, Eye, EyeOff, Lock, Mail, ArrowRight, ShieldCheck, AlertTriang
 
 interface AuthScreenProps {
   onSuccess: () => void;
+  onBack?: () => void;
 }
 
-export default function AuthScreen({ onSuccess }: AuthScreenProps) {
+export default function AuthScreen({ onSuccess, onBack }: AuthScreenProps) {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot-password'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -94,7 +95,16 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[350px] h-[350px] bg-blue-500/10 rounded-full blur-3xl" />
       <div className="absolute bottom-10 right-10 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
 
-      <div className="w-full max-w-md bg-[#161B22]/70 border border-[#30363D] rounded-2xl p-6 md:p-8 backdrop-blur shadow-2xl z-10">
+      <div className="relative w-full max-w-md bg-[#161B22]/70 border border-[#30363D] rounded-2xl p-6 md:p-8 backdrop-blur shadow-2xl z-10">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="absolute top-4 left-4 text-gray-500 hover:text-white text-[10px] font-mono font-bold flex items-center space-x-1 cursor-pointer transition-colors bg-[#0D1117] border border-[#30363D] px-2 py-0.5 rounded"
+          >
+            <span>← RETURN</span>
+          </button>
+        )}
         {/* Brand Shield Header */}
         <div className="flex flex-col items-center mb-6 text-center">
           <div className="w-16 h-16 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-3">
