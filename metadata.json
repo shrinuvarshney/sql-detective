@@ -1,0 +1,6 @@
+{
+  "name": "SQL Detective",
+  "description": "An educational browser-based game to learn SQL by solving cyber-crime detective cases.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
