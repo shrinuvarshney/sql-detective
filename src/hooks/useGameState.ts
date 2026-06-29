@@ -5,6 +5,14 @@ import { onAuthStateChanged, User, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../database/firebase';
 import { levels } from '../levels/levelsData';
+import { 
+  getLocalProgress, 
+  saveLocalProgress, 
+  clearLocalProgress, 
+  getLocalSettings, 
+  saveLocalSettings, 
+  clearLocalSettings 
+} from '../utils/localDb';
 
 const STORAGE_PROGRESS_KEY = 'sql_detective_progress_v1';
 const STORAGE_SETTINGS_KEY = 'sql_detective_settings_v1';
@@ -104,6 +112,80 @@ const defaultSettings: GameSettings = {
   theme: 'dark'
 };
 
+export function mergeProgress(local: GameProgress, remote: GameProgress): GameProgress {
+  const completedLevels = Array.from(new Set([...(local.completedLevels || []), ...(remote.completedLevels || [])]));
+  
+  // Merge numeric metrics with Math.max
+  const highestScore = Math.max(local.highestScore || 0, remote.highestScore || 0);
+  const totalScore = Math.max(local.totalScore || 0, remote.totalScore || 0);
+  const currentLevelId = Math.max(local.currentLevelId || 1, remote.currentLevelId || 1);
+  const xp = Math.max(local.xp || 0, remote.xp || 0);
+  const level = Math.max(local.level || 1, remote.level || 1);
+  const credits = Math.max(local.credits || 0, remote.credits || 0);
+  const evidencePoints = Math.max(local.evidencePoints || 0, remote.evidencePoints || 0);
+  const streak = Math.max(local.streak || 1, remote.streak || 1);
+
+  // Merge map-based fields
+  const hintsUsedCount = { ...(local.hintsUsedCount || {}), ...(remote.hintsUsedCount || {}) };
+  for (const k of Object.keys(hintsUsedCount)) {
+    const key = Number(k);
+    hintsUsedCount[key] = Math.max(local.hintsUsedCount?.[key] || 0, remote.hintsUsedCount?.[key] || 0);
+  }
+
+  const levelScores = { ...(local.levelScores || {}), ...(remote.levelScores || {}) };
+  for (const k of Object.keys(levelScores)) {
+    const key = Number(k);
+    levelScores[key] = Math.max(local.levelScores?.[key] || 0, remote.levelScores?.[key] || 0);
+  }
+
+  const attemptsCount = { ...(local.attemptsCount || {}), ...(remote.attemptsCount || {}) };
+  for (const k of Object.keys(attemptsCount)) {
+    const key = Number(k);
+    attemptsCount[key] = Math.max(local.attemptsCount?.[key] || 0, remote.attemptsCount?.[key] || 0);
+  }
+
+  // Merge arrays/string fields
+  const unlockedAvatars = Array.from(new Set([...(local.unlockedAvatars || []), ...(remote.unlockedAvatars || [])]));
+  const achievements = Array.from(new Set([...(local.achievements || []), ...(remote.achievements || [])]));
+  const username = local.username && local.username !== '' ? local.username : (remote.username || '');
+  const selectedAvatar = local.selectedAvatar || remote.selectedAvatar || 'detective_classic';
+
+  // Dates
+  const lastActiveDate = (local.lastActiveDate && remote.lastActiveDate)
+    ? (local.lastActiveDate > remote.lastActiveDate ? local.lastActiveDate : remote.lastActiveDate)
+    : (local.lastActiveDate || remote.lastActiveDate || new Date().toISOString().split('T')[0]);
+
+  // Statistics
+  const statistics = {
+    casesSolved: Math.max(local.statistics?.casesSolved || 0, remote.statistics?.casesSolved || 0, completedLevels.length),
+    hintsUnlocked: Math.max(local.statistics?.hintsUnlocked || 0, remote.statistics?.hintsUnlocked || 0),
+    totalAttempts: Math.max(local.statistics?.totalAttempts || 0, remote.statistics?.totalAttempts || 0),
+    creditsSpent: Math.max(local.statistics?.creditsSpent || 0, remote.statistics?.creditsSpent || 0),
+    highestStreak: Math.max(local.statistics?.highestStreak || 1, remote.statistics?.highestStreak || 1, streak),
+  };
+
+  return {
+    completedLevels,
+    highestScore,
+    totalScore,
+    currentLevelId,
+    hintsUsedCount,
+    levelScores,
+    attemptsCount,
+    username,
+    selectedAvatar,
+    xp,
+    level,
+    credits,
+    evidencePoints,
+    unlockedAvatars,
+    achievements,
+    streak,
+    lastActiveDate,
+    statistics
+  };
+}
+
 export function useGameState() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -145,6 +227,24 @@ export function useGameState() {
     return defaultSettings;
   });
 
+  // Load progress and settings from IndexedDB on startup as a robust supplement
+  useEffect(() => {
+    async function loadFromIndexedDb() {
+      const dbProgress = await getLocalProgress();
+      if (dbProgress) {
+        setProgress(prev => mergeProgress(prev, dbProgress));
+      }
+      const dbSettings = await getLocalSettings();
+      if (dbSettings) {
+        setSettings(prev => ({
+          ...prev,
+          ...dbSettings
+        }));
+      }
+    }
+    loadFromIndexedDb();
+  }, []);
+
   // Track Firebase Authentication changes and sync database
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -176,19 +276,21 @@ export function useGameState() {
               updatedHighestStreak = Math.max(updatedHighestStreak, updatedStreak);
             }
             
-            const mergedProgress: GameProgress = {
-              ...defaultProgress,
-              ...cloudProgress,
-              streak: updatedStreak,
-              lastActiveDate: today,
-              username: cloudProgress.username || currentUser.email?.split('@')[0] || 'Agent',
-              statistics: {
-                ...defaultProgress.statistics,
-                ...(cloudProgress.statistics || {}),
-                highestStreak: updatedHighestStreak
-              }
-            };
-            setProgress(mergedProgress);
+            setProgress(prevLocal => {
+              const remoteParsed: GameProgress = {
+                ...defaultProgress,
+                ...cloudProgress,
+                streak: updatedStreak,
+                lastActiveDate: today,
+                username: cloudProgress.username || currentUser.email?.split('@')[0] || 'Agent',
+                statistics: {
+                  ...defaultProgress.statistics,
+                  ...(cloudProgress.statistics || {}),
+                  highestStreak: updatedHighestStreak
+                }
+              };
+              return mergeProgress(prevLocal, remoteParsed);
+            });
           } else {
             // First time logging in on this account - populate cloud with any local progress
             const initialProgress: GameProgress = {
@@ -208,13 +310,15 @@ export function useGameState() {
     return () => unsubscribe();
   }, []);
 
-  // Sync state to local storage for instant offline access
+  // Sync state to local storage and IndexedDB for instant offline access and maximum durability
   useEffect(() => {
     localStorage.setItem(STORAGE_PROGRESS_KEY, JSON.stringify(progress));
+    saveLocalProgress(progress);
   }, [progress]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(settings));
+    saveLocalSettings(settings);
   }, [settings]);
 
   // Sync state to Cloud Firestore when updated
@@ -514,7 +618,7 @@ export function useGameState() {
       isFirstTime,
       didLevelUp,
       newLevel: finalNewLevel,
-      newAchievements: newlyUnlockedAchievements
+      newAchievements: Array.from(new Set(newlyUnlockedAchievements))
     };
   };
 
@@ -528,12 +632,16 @@ export function useGameState() {
 
   const resetProgress = () => {
     setProgress(defaultProgress);
+    localStorage.removeItem(STORAGE_PROGRESS_KEY);
+    clearLocalProgress();
     triggerSound('click');
   };
 
   const handleLogout = async () => {
     await signOut(auth);
     setProgress(defaultProgress);
+    localStorage.removeItem(STORAGE_PROGRESS_KEY);
+    clearLocalProgress();
     triggerSound('click');
   };
 

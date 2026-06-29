@@ -1,5 +1,5 @@
 import { GameProgress, GameSettings } from '../types';
-import { Terminal, ShieldAlert, Award, PlayCircle, Layers, Settings, LogOut, UserCheck, User } from 'lucide-react';
+import { Terminal, ShieldAlert, Award, PlayCircle, Layers, Settings, LogOut, UserCheck, User, BrainCircuit } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface MainMenuProps {
@@ -13,6 +13,7 @@ interface MainMenuProps {
   onOpenSettings: () => void;
   onSelectLevel: (id: number) => void;
   onOpenProfile: () => void;
+  onOpenAiLab: () => void;
 }
 
 const AVATAR_EMOJIS: { [key: string]: string } = {
@@ -36,6 +37,7 @@ export default function MainMenu({
   onOpenLevelSelect,
   onOpenSettings,
   onOpenProfile,
+  onOpenAiLab,
 }: MainMenuProps) {
   const hasProgress = progress.completedLevels.length > 0;
   const selectedAvatarEmoji = AVATAR_EMOJIS[progress.selectedAvatar || 'detective_classic'] || '🕵️‍♂️';
@@ -110,6 +112,19 @@ export default function MainMenu({
             <span>CONTINUE CASEFILE</span>
           </button>
         )}
+
+        <button
+          id="btn-open-ai-lab"
+          onClick={onOpenAiLab}
+          className="flex items-center justify-center space-x-3 w-full py-4 px-6 rounded-xl text-sm font-mono font-bold text-white bg-gradient-to-r from-blue-600/30 to-purple-600/30 hover:from-blue-600/40 hover:to-purple-600/40 border border-blue-500/40 hover:border-blue-500 transition duration-150 transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-blue-500/5 cursor-pointer"
+        >
+          <BrainCircuit className="w-5 h-5 text-blue-400 animate-pulse" />
+          <span>COGNITIVE INTEL LAB // HQ</span>
+          <span className="relative flex h-1.5 w-1.5 ml-1">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500"></span>
+          </span>
+        </button>
 
         <button
           id="btn-open-profile"

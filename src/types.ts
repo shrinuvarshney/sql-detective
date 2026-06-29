@@ -20,6 +20,7 @@ export interface Level {
   hints: string[];
   initialQuery: string;
   expectedQuery: string;
+  sqlSetup?: string; // Runs arbitrary creation/seeding SQL for custom generated levels
 }
 
 export interface QueryResult {

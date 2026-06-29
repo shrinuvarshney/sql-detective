@@ -218,6 +218,17 @@ export async function runQuery(query: string): Promise<RunQueryResult> {
 }
 
 // Compare user's execution results with expected canonical execution results
+// Run arbitrary setup SQL (used for custom dynamic AI-generated levels)
+export async function executeSetup(setupSql: string): Promise<void> {
+  try {
+    const database = await getDatabase();
+    database.run(setupSql);
+  } catch (error) {
+    console.error("Failed to run setup SQL:", error);
+    throw error;
+  }
+}
+
 export function compareResults(
   resPlayer: RunQueryResult,
   resExpected: RunQueryResult

@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { Level, GameProgress, GameSettings, QueryResult } from '../types';
-import { runQuery, compareResults } from '../database/dbManager';
+import { runQuery, compareResults, executeSetup } from '../database/dbManager';
 import SchemaExplorer from './SchemaExplorer';
 import SqlEditor from './SqlEditor';
 import CaseSolvedModal from './CaseSolvedModal';
+import AiHubSidebar from './AiHubSidebar';
 import { levels } from '../levels/levelsData';
 import { 
   ArrowLeft, Award, CheckCircle2, 
   XCircle, AlertTriangle, ShieldCheck, 
-  Volume2, VolumeX, Eye, Zap, Sparkles
+  Volume2, VolumeX, Eye, Zap, Sparkles, BrainCircuit
 } from 'lucide-react';
 
 interface GameScreenProps {
@@ -52,6 +53,11 @@ export default function GameScreen({
   const [scoreEarnedInLevel, setScoreEarnedInLevel] = useState<number | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isSolvedModalOpen, setIsSolvedModalOpen] = useState(false);
+
+  // AI-powered features states
+  const [isAiHubOpen, setIsAiHubOpen] = useState(false);
+  const [activeBriefingStyle, setActiveBriefingStyle] = useState<'standard' | 'cyberpunk_noir' | 'hightech_thrill' | 'retro_scifi'>('standard');
+  const [stylizedStory, setStylizedStory] = useState<string | null>(null);
   
   // Store rewards for displaying in modal
   const [lastRewards, setLastRewards] = useState<{
@@ -82,6 +88,18 @@ export default function GameScreen({
     setIsSuccess(false);
     setScoreEarnedInLevel(null);
     setLastRewards(null);
+    setStylizedStory(null);
+    setActiveBriefingStyle('standard');
+
+    if (level.sqlSetup) {
+      executeSetup(level.sqlSetup)
+        .then(() => {
+          addLog(`SYNTHETIC DYNAMIC VIRTUAL SCHEMA DEPLOYED SUCCESSFULLY.`);
+        })
+        .catch((err) => {
+          addLog(`SYNTHETIC SCHEMA ERROR: ${err.message}`);
+        });
+    }
     
     // Welcome log entry
     setConsoleLogs([
@@ -298,6 +316,19 @@ export default function GameScreen({
           <div className="h-4 w-[1px] bg-[#30363D] hidden sm:block" />
 
           <button
+            onClick={() => setIsAiHubOpen(!isAiHubOpen)}
+            className={`flex items-center space-x-1 px-2.5 py-1 rounded transition border cursor-pointer ${isAiHubOpen ? 'bg-blue-500/10 border-blue-500 text-blue-400 font-bold drop-shadow-[0_0_3px_rgba(59,130,246,0.35)]' : 'bg-[#0D1117] hover:bg-[#30363D] border-[#30363D] text-[#8B949E] hover:text-white'}`}
+            title="Toggle Sentinel Co-Pilot Terminal"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${isAiHubOpen ? 'text-blue-400 animate-spin' : 'text-gray-400'}`} />
+            <span className="text-[10px] uppercase font-mono tracking-tight">SENTINEL CO-PILOT</span>
+            <span className="relative flex h-1.5 w-1.5 ml-0.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500"></span>
+            </span>
+          </button>
+
+          <button
             id="btn-toggle-sound-game"
             onClick={handleToggleSoundLocal}
             className="p-1 rounded bg-[#0D1117] hover:bg-[#30363D] border border-[#30363D] text-[#8B949E] hover:text-white transition cursor-pointer"
@@ -336,7 +367,7 @@ export default function GameScreen({
                   {level.title.replace(/Case File \d+ - /, '')}
                 </h3>
                 <p className="text-[12px] leading-relaxed text-[#8B949E] font-sans">
-                  {level.story}
+                  {stylizedStory || level.story}
                 </p>
               </section>
 
@@ -555,6 +586,30 @@ export default function GameScreen({
           </div>
 
         </section>
+
+        {isAiHubOpen && (
+          <aside className="w-full lg:w-[350px] border-t lg:border-t-0 lg:border-l border-[#30363D] bg-[#0D1117] flex flex-col shrink-0 overflow-hidden h-full">
+            <AiHubSidebar
+              level={level}
+              userQuery={userQuery}
+              queryError={queryError}
+              queryResult={queryResult}
+              validationMessage={validationMessage}
+              isSuccess={isSuccess}
+              activeBriefingStyle={activeBriefingStyle}
+              onApplyScaffold={(scaffold: string) => {
+                setUserQuery(scaffold);
+                addLog("APPLIED CYBERNETIC BOILERPLATE CODE SCAFFOLD.");
+              }}
+              onStyleStory={(stylized: string, styleName) => {
+                setStylizedStory(stylized);
+                setActiveBriefingStyle(styleName);
+                addLog(`RECONFIGURED STORY NARRATIVE INTERFACE: [${styleName.toUpperCase()}]`);
+              }}
+              onClose={() => setIsAiHubOpen(false)}
+            />
+          </aside>
+        )}
       </main>
 
       {/* Footer Bar: Stats */}

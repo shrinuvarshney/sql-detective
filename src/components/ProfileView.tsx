@@ -31,7 +31,7 @@ const AVATARS: AvatarItem[] = [
   { id: 'technician_net', emoji: '💻', label: 'Net Tech', color: 'border-cyan-500/35 text-cyan-400 bg-cyan-500/5', cost: 0, reqLevel: 1, description: 'Low-level mainframe engineer skilled in quick local subnets analysis.' },
   { id: 'hacker_shadow', emoji: '🥷', label: 'Hacker Shadow', color: 'border-purple-500/35 text-purple-400 bg-purple-500/5', cost: 200, reqLevel: 3, description: 'Silent database phantom operating behind layers of proxied nodes.' },
   { id: 'forensics_chief', emoji: '👮‍♀️', label: 'Chief Forensics', color: 'border-rose-500/35 text-rose-400 bg-rose-500/5', cost: 400, reqLevel: 6, description: 'Director of the Division, possessing deep mastery over file traces.' },
-  { id: 'ai_overlord', emoji: '🤖', label: 'AI Overlord', color: 'border-amber-500/35 text-amber-400 bg-amber-500/5', cost: 600, reqLevel: 10, description: 'Autonomous synthetic node designed to isolate query flaws instantly.' },
+  { id: 'ai_overlord', emoji: '🤖', label: 'Mainframe Overlord', color: 'border-amber-500/35 text-amber-400 bg-amber-500/5', cost: 600, reqLevel: 10, description: 'Classified cybernetic mastermind node designed to isolate query flaws instantly.' },
   { id: 'crypt_master', emoji: '👑', label: 'Crypt Master', color: 'border-yellow-500/35 text-yellow-400 bg-yellow-500/5', cost: 800, reqLevel: 15, description: 'Sovereign of decrypts, wielding the absolute authority of the blockchain.' }
 ];
 

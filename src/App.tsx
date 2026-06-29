@@ -10,11 +10,17 @@ import { useGameState } from './hooks/useGameState';
 import { levels } from './levels/levelsData';
 import { getDatabase } from './database/dbManager';
 import { Terminal, Cpu } from 'lucide-react';
+import AiCoachAndLab from './components/AiCoachAndLab';
+import { Level } from './types';
 
 export default function App() {
   const [view, setView] = useState<'landing' | 'menu' | 'level-select' | 'game' | 'profile' | 'auth'>('landing');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [redirectAfterAuth, setRedirectAfterAuth] = useState<'menu' | 'game'>('menu');
+  
+  // Custom AI synthetic level and AI Coach lab state
+  const [customLevel, setCustomLevel] = useState<Level | null>(null);
+  const [isAiLabOpen, setIsAiLabOpen] = useState(false);
 
   const {
     progress,
@@ -55,7 +61,7 @@ export default function App() {
     }
   }, [user, authLoading]);
 
-  const activeLevel = levels.find(l => l.id === progress.currentLevelId) || levels[0];
+  const activeLevel = customLevel || levels.find(l => l.id === progress.currentLevelId) || levels[0];
 
   const handleStartInvestigation = () => {
     // If they click "Start Investigation", start from Level 1
@@ -172,6 +178,10 @@ export default function App() {
             setView('profile');
             triggerSound('click');
           }}
+          onOpenAiLab={() => {
+            setIsAiLabOpen(true);
+            triggerSound('click');
+          }}
         />
       )}
 
@@ -192,6 +202,7 @@ export default function App() {
           progress={progress}
           settings={settings}
           onBackToMenu={() => {
+            setCustomLevel(null);
             setView('menu');
             triggerSound('click');
           }}
@@ -214,6 +225,19 @@ export default function App() {
             triggerSound('click');
           }}
           triggerSound={triggerSound}
+        />
+      )}
+
+      {isAiLabOpen && (
+        <AiCoachAndLab
+          progress={progress}
+          onPlayCustomLevel={(levelToPlay: Level) => {
+            setCustomLevel(levelToPlay);
+            setIsAiLabOpen(false);
+            setView('game');
+            triggerSound('success');
+          }}
+          onClose={() => setIsAiLabOpen(false)}
         />
       )}
 
